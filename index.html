@@ -8,18 +8,20 @@
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:rgba(0,0,0,0)}
 body{background:#070707;color:#fff;font-family:Arial,Helvetica,sans-serif;overflow:hidden;touch-action:none}
 #canvas{position:absolute;top:0;left:0;display:block}
-#partPanel{position:absolute;left:0;top:0;width:140px;height:100%;background:#202630;padding:9px;z-index:10;overflow-y:auto}
+#partPanel{position:absolute;left:0;top:0;width:150px;height:100%;background:#202630;padding:9px;z-index:10;overflow-y:auto}
 #partPanel h4{color:#94a0b0;font-size:14px;margin-bottom:7px}
 .partItem{padding:8px 6px;background:#2f3845;margin:5px 0;border-radius:2px;font-size:13px;cursor:pointer}
 .partItem.selected{background:#36608f}
 .hudItem{background:rgba(0,0,0,.52);padding:3px 7px;margin:3px 0;border-radius:2px;font-size:12px;white-space:nowrap}
 #topHud{position:absolute;top:7px;right:9px;z-index:10;text-align:right}
-#leftBottomHud{position:absolute;bottom:7px;left:149px;z-index:10}
-#controlPanel{position:absolute;bottom:7px;right:9px;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 165px);z-index:10}
+#leftBottomHud{position:absolute;bottom:7px;left:159px;z-index:10}
+#controlPanel{position:absolute;bottom:7px;right:9px;display:flex;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 175px);z-index:10}
 .ctrlBtn{padding:8px 10px;border:none;border-radius:2px;font-size:13px;color:#fff;cursor:pointer}
 .ctrlBtn.green{background:#28a543}.ctrlBtn.blue{background:#3172b3}
 .ctrlBtn.gray{background:#424242}.ctrlBtn.red{background:#a62b2b}.ctrlBtn.brown{background:#7d5529}
-#hint{position:absolute;top:8px;left:148px;z-index:10;font-size:11px;color:#999}
+.ctrlBtn.purple{background:#7a3fa0}
+#hint{position:absolute;top:8px;left:158px;z-index:10;font-size:11px;color:#999;max-width:calc(100vw - 320px)}
+#bottomKeys{position:absolute;bottom:46px;right:9px;z-index:10;font-size:10px;color:#777;text-align:right}
 </style>
 </head>
 <body>
@@ -44,6 +46,8 @@ body{background:#070707;color:#fff;font-family:Arial,Helvetica,sans-serif;overfl
     <div class="hudItem">Mass: <span id="mass">0</span> kg</div>
     <div class="hudItem">Apo: <span id="apo">0</span> m</div>
     <div class="hudItem">Peri: <span id="peri">0</span> m</div>
+    <div class="hudItem">Period: <span id="period">0</span></div>
+    <div class="hudItem">ΔV: <span id="dv">0</span> m/s</div>
 </div>
 <div id="controlPanel">
     <button class="ctrlBtn green" id="launchBtn">Launch</button>
@@ -52,175 +56,254 @@ body{background:#070707;color:#fff;font-family:Arial,Helvetica,sans-serif;overfl
     <button class="ctrlBtn red" id="clearBtn">Clear</button>
     <button class="ctrlBtn brown" id="timeInc">Time+</button>
     <button class="ctrlBtn brown" id="timeDec">Time-</button>
+    <button class="ctrlBtn purple" id="autoBtn">Auto: ON</button>
 </div>
-<div id="hint">选择零件 → 点击画布放置 · 拖拽旋转 · 滚轮/双指缩放</div>
+<div id="hint">选零件→点画布放置(吸附堆叠) · R旋转 · 滚轮/双指缩放 · 拖拽平移</div>
+<div id="bottomKeys">W/空格 点火 · A/D 转向 · P 暂停</div>
 <script>
 "use strict";
-const G = 6.67408e-11, ISP = 320, g0 = 9.81;
-const BODIES = [
- {name:"Sun",  parent:null, mass:1.989e30, radius:695700000, soi:1e99,  color:"#ffd75e", x:0,          y:0, vx:0,    vy:0,    hasAtm:false, atm:0, sh:0},
- {name:"Earth",parent:"Sun",mass:5.972e24,  radius:6371000,   soi:924000000, color:"#3b7cc4", x:1.496e11, y:0, vx:0, vy:29780, hasAtm:true, atm:120000, sh:8500},
+/* ================= 配置 ================= */
+const G=6.67408e-11, ISP=350, g0=9.81;
+const BODIES=[
+ {name:"Sun",  parent:null, mass:1.989e30, radius:695700000, soi:1e99,   color:"#ffd75e", x:0,        y:0, vx:0,    vy:0,    hasAtm:false, atm:0, sh:0},
+ {name:"Earth",parent:"Sun",mass:5.2915793e22,radius:600000,    soi:924000000, color:"#3b7cc4", x:1.496e11, y:0, vx:0, vy:29780, hasAtm:true, atm:40000, sh:3000},
  {name:"Moon", parent:"Earth",mass:7.342e22,radius:1737400,   soi:66100000,  color:"#9a9a9a", x:1.496e11+3.844e8, y:0, vx:0, vy:1022, hasAtm:false, atm:0, sh:0},
  {name:"Mars", parent:"Sun",mass:6.4171e23, radius:3389500,   soi:576000000, color:"#c5765a", x:2.279e11, y:0, vx:0, vy:24130, hasAtm:true, atm:80000, sh:11100},
  {name:"Venus",parent:"Sun",mass:4.8675e24,radius:6051800,    soi:616000000, color:"#e2c27e", x:1.082e11, y:0, vx:0, vy:35020, hasAtm:true, atm:250000, sh:15000},
 ];
-const PARTDEF = {
- pod:      {w:26,h:32,color:"#c9c9c9",dry:120, fuel:0,   eng:false,thr:0,    dec:false,drag:.9},
- tank:     {w:24,h:30,color:"#c0392b",dry:80,  fuel:400,  eng:false,thr:0,    dec:false,drag:.7},
- engine:   {w:22,h:26,color:"#4a4a4a",dry:50,  fuel:0,    eng:true, thr:32000,dec:false,drag:.6},
- decoupler:{w:28,h:12,color:"#8a8a8a",dry:30,  fuel:0,    eng:false,thr:0,    dec:true, drag:.5},
- nose:     {w:24,h:28,color:"#e8e8e8",dry:40,  fuel:0,    eng:false,thr:0,    dec:false,drag:.2},
+const PARTDEF={
+ pod:      {w:26,h:32,color:"#c9c9c9",dry:200, fuel:0,    eng:false,thr:0,     dec:false,drag:.8},
+ tank:     {w:24,h:34,color:"#c0392b",dry:500, fuel:5000,  eng:false,thr:0,     dec:false,drag:.6},
+ engine:   {w:22,h:30,color:"#4a4a4a",dry:200, fuel:0,    eng:true, thr:400000,dec:false,drag:.3},
+ decoupler:{w:28,h:14,color:"#8a8a8a",dry:80,  fuel:0,    eng:false,thr:0,     dec:true, drag:.5},
+ nose:     {w:24,h:30,color:"#e8e8e8",dry:100, fuel:0,    eng:false,thr:0,     dec:false,drag:.1},
 };
-const cv = document.getElementById("canvas"), ctx = cv.getContext("2d");
-let W=innerWidth, H=innerHeight; cv.width=W; cv.height=H;
-let mode="editor";
-let selected="pod";
-let rocket=[];
+/* ================= 状态 ================= */
+const cv=document.getElementById("canvas"), ctx=cv.getContext("2d");
+let W=innerWidth,H=innerHeight; cv.width=W; cv.height=H;
+let mode="editor", selected="pod", selectedRot=0, autoSteer=true, paused=false;
+let rocket=[];                          // [{type,px,py,rot}] 世界坐标, 轴向远离天体
 let cam={x:0,y:0,scale:1};
 let simTime=0, timeScale=1;
 let vessel={x:0,y:0,vx:0,vy:0,rot:0,ang:0,engineOn:false,destroyed:false,parts:[]};
-let particles=[];
+let particles=[], path=[], pathTimer=0, predict=[];
+const bodies=BODIES.map(b=>({...b}));
+/* 编辑器视角初始对准地球表面 */
+(function(){const b=findBody("Earth");cam.x=b.x;cam.y=b.y;cam.scale=Math.max(0.5, 800/Math.max(b.radius,1));})();
+/* ================= 工具 ================= */
 const clamp=(v,a,b)=>v<a?a:(v>b?b:v);
 const dist=(a,b,c,d)=>{const x=c-a,y=d-b;return Math.sqrt(x*x+y*y)};
 const norm=(a,b)=>{const m=Math.hypot(a,b)||1;return[a/m,b/m]};
 const fmt=n=>{n=isFinite(n)?n:0;if(Math.abs(n)>1e6)return(n/1e6).toFixed(2)+"M";if(Math.abs(n)>1e3)return(n/1e3).toFixed(2)+"K";return n.toFixed(1)};
-const bodies=BODIES.map(b=>({...b}));
+const fmtTime=s=>{s=Math.floor(s);const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(x).padStart(2,"0")}`};
+/* ================= 天体 ================= */
 function findBody(name){return bodies.find(b=>b.name===name)}
 function findSOI(x,y){let best=null;for(const b of bodies){if(dist(x,y,b.x,b.y)<b.soi)best=b}return best||findBody("Sun")}
 function atmDensity(b,alt){if(!b.hasAtm||alt>b.atm)return 0;return 1.225*Math.exp(-alt/b.sh)}
 function updateBodies(dt){for(const b of bodies){const p=findBody(b.parent);if(!p||p===b)continue;const r=dist(b.x,b.y,p.x,p.y);const g=G*p.mass/(r*r);const[nx,ny]=norm(p.x-b.x,p.y-b.y);b.vx+=g*nx*dt;b.vy+=g*ny*dt;b.x+=b.vx*dt;b.y+=b.vy*dt}}
+/* ================= 编辑器 ================= */
 function rocketMass(){let m=0;for(const p of rocket){const d=PARTDEF[p.type];m+=d.dry+(d.fuel||0)}return m}
-function rocketCOM(){let m=0,mx=0,my=0;for(const p of rocket){const d=PARTDEF[p.type];const pm=d.dry+(d.fuel||0);m+=pm;mx+=pm*p.px;my+=pm*p.py}return m>0?[mx/m,my/m]:[0,0]}
-function placePart(sx,sy){let px=sx,py=sy;
-  if(rocket.length){let best=null,bd=1e9;for(const p of rocket){const pd=PARTDEF[p.type];
-    const cu=[p.px,p.py-Math.cos(p.rot)*pd.h/2-Math.sin(p.rot)*pd.h/2];
-    const d=dist(sx,sy,cu[0],cu[1]);if(d<bd){bd=d;best={p,pd,edge:cu}}
-    const cd=[p.px+Math.cos(p.rot)*pd.h/2+Math.sin(p.rot)*pd.h/2,p.py-Math.sin(p.rot)*pd.h/2+Math.cos(p.rot)*pd.h/2];
-    const d2=dist(sx,sy,cd[0],cd[1]);if(d2<bd){bd=d2;best={p,pd,edge:cd}}
+function rocketFuel(){let f=0;for(const p of rocket)f+=PARTDEF[p.type].fuel||0;return f}
+function placePart(sx,sy){
+  if(rocket.length){
+    const last=rocket[rocket.length-1], ld=PARTDEF[last.type], nd=PARTDEF[selected];
+    const ax=Math.cos(last.rot), ay=Math.sin(last.rot);          // 轴向(远离天体)
+    const cx=last.px+ax*(ld.h/2+nd.h/2), cy=last.py+ay*(ld.h/2+nd.h/2);
+    rocket.push({type:selected,px:cx,py:cy,rot:last.rot});
+  } else {
+    rocket.push({type:selected,px:sx,py:sy,rot:selectedRot});
   }
-    if(best&&bd<50){px=best.edge[0];py=best.edge[1]}
-  }
-  rocket.push({type:selected,px,py,rot:rocket.length?rocket[rocket.length-1].rot:0});
 }
-function buildVessel(){vessel.parts=rocket.map(p=>({...PARTDEF[p.type],px:p.px,py:p.py}));vessel.engineOn=false;vessel.destroyed=false;
-  const b=findBody("Earth");vessel.x=b.x+b.radius+80;vessel.y=b.y;vessel.rot=0;vessel.ang=0;vessel.vx=0;vessel.vy=0;simTime=0}
+function rotateRocket(){selectedRot=(selectedRot+Math.PI/2)%(Math.PI*2)}
+/* ================= 载具构建 ================= */
+function buildVessel(){
+  if(!rocket.length)return;
+  vessel.parts=rocket.map(p=>({...PARTDEF[p.type],px:p.px,py:p.py}));
+  let m=0,mx=0,my=0;for(const p of vessel.parts){const pm=p.dry+p.fuel;m+=pm;mx+=pm*p.px;my+=pm*p.py}
+  vessel.x=mx/m;vessel.y=my/m;
+  vessel.rot=rocket[rocket.length-1].rot; vessel.ang=0; vessel.vx=0; vessel.vy=0;
+  vessel.engineOn=false; vessel.destroyed=false; simTime=0; path=[]; predict=[];
+}
+/* ================= 物理 ================= */
 function vesselMass(){let m=0;for(const p of vessel.parts)m+=p.dry+p.fuel;return m}
 function vesselFuel(){let f=0;for(const p of vessel.parts)f+=p.fuel;return f}
-function stepVessel(dt){if(vessel.destroyed)return;
-  const m=vesselMass();if(m<1e-9){vessel.destroyed=true;return}
-  const b=findSOI(vessel.x,vessel.y);if(!b)return;
-  const r=dist(vessel.x,vessel.y,b.x,b.y);
+function stepVessel(dt){
+  if(vessel.destroyed)return;
+  const m=vesselMass(); if(m<1e-9){vessel.destroyed=true;return}
+  const b=findSOI(vessel.x,vessel.y); if(!b)return;
+  const rx=vessel.x-b.x, ry=vessel.y-b.y, r=Math.hypot(rx,ry)||1;
   const g=G*b.mass/(r*r);
   let ax=g*(b.x-vessel.x)/r, ay=g*(b.y-vessel.y)/r;
   let thrust=0;
-  if(vessel.engineOn&&vesselFuel()>0){for(const p of vessel.parts)if(p.eng)thrust+=p.thr;
-    const fr=thrust/(g0*ISP)*dt;let rem=fr;for(const p of vessel.parts){if(rem<=0)break;if(p.fuel>0){const t=Math.min(rem,p.fuel);p.fuel-=t;rem-=t}}
-    ax+=Math.cos(vessel.rot)*thrust/m;ay+=Math.sin(vessel.rot)*thrust/m;
+  if(vessel.engineOn && vesselFuel()>0){
+    for(const p of vessel.parts)if(p.eng)thrust+=p.thr;
+    const fr=thrust/(g0*ISP)*dt; let rem=fr;
+    for(const p of vessel.parts){if(rem<=0)break;if(p.fuel>0){const t=Math.min(rem,p.fuel);p.fuel-=t;rem-=t}}
+    ax+=Math.cos(vessel.rot)*thrust/m; ay+=Math.sin(vessel.rot)*thrust/m;
+    for(const p of vessel.parts)if(p.eng){  // 喷口在发动机尾部
+      const off=p.px-Math.cos(vessel.rot)*PARTDEF[p.type].h/2;
+      const offy=p.py-Math.sin(vessel.rot)*PARTDEF[p.type].h/2;
+      spawnExhaust(off,offy,-vessel.rot);
+    }
   }
-  const alt=r-b.radius;const rho=atmDensity(b,alt);const spd=Math.hypot(vessel.vx,vessel.vy);
-  if(rho>0&&spd>1e-6){let drag=0;for(const p of vessel.parts)drag+=0.5*rho*spd*spd*p.drag;
-    ax-=drag*vessel.vx/(m*spd);ay-=drag*vessel.vy/(m*spd)}
-  vessel.vx+=ax*dt;vessel.vy+=ay*dt;vessel.x+=vessel.vx*dt;vessel.y+=vessel.vy*dt;
-  if(alt<=0){vessel.destroyed=true}
+  /* 自动重力转向: 离大气后缓慢指向速度方向 */
+  const spd=Math.hypot(vessel.vx,vessel.vy);
+  const alt=r-b.radius, rho=atmDensity(b,alt);
+  if(autoSteer && vessel.engineOn && spd>60 && rho<1e-3){
+    const target=Math.atan2(vessel.vy,vessel.vx);
+    let d=target-vessel.rot;
+    while(d>Math.PI)d-=2*Math.PI; while(d<-Math.PI)d+=2*Math.PI;
+    vessel.rot+=clamp(d,-0.3*dt,0.3*dt);
+  }
+  /* 大气阻力 */
+  if(rho>0 && spd>1e-6){let drag=0;for(const p of vessel.parts)drag+=0.5*rho*spd*spd*p.drag*(p.w/10)*(p.h/10);
+    ax-=drag*vessel.vx/(m*spd); ay-=drag*vessel.vy/(m*spd)}
+  vessel.vx+=ax*dt; vessel.vy+=ay*dt; vessel.x+=vessel.vx*dt; vessel.y+=vessel.vy*dt;
+  if(alt<=0){vessel.destroyed=true;explode(vessel.x,vessel.y,40)}
 }
-let path=[];let pathTimer=0;
 function recordPath(dt){pathTimer+=dt;if(pathTimer<1)return;pathTimer=0;path.push({x:vessel.x,y:vessel.y});if(path.length>400)path.shift()}
-function orbitParams(){const b=findSOI(vessel.x,vessel.y);if(!b)return[0,0];
+/* 轨道预测: 向前传播 */
+function updatePredict(){
+  if(mode!=="flight"||vessel.destroyed)return;
+  const b=findSOI(vessel.x,vessel.y); if(!b)return;
+  const r=dist(vessel.x,vessel.y,b.x,b.y), alt=r-b.radius;
+  const dtP=Math.max(0.5, alt*0.02);
+  let px=vessel.x,py=vessel.y,pvx=vessel.vx,pvy=vessel.vy;
+  predict=[];
+  for(let i=0;i<160;i++){
+    const dx=b.x-px,dy=b.y-py,rd=Math.hypot(dx,dy)||1;
+    const gg=G*b.mass/(rd*rd);
+    pvx+=gg*dx/rd*dtP; pvy+=gg*dy/rd*dtP;
+    px+=pvx*dtP; py+=pvy*dtP;
+    if(dist(px,py,b.x,b.y)<b.radius)break;
+    if(i%3===0)predict.push({x:px,y:py});
+  }
+}
+/* ================= 粒子 ================= */
+function spawnExhaust(x,y,rot){if(particles.length>260)particles.shift();
+  const sp=(120+Math.random()*80);
+  particles.push({x,y,vx:Math.cos(rot)*sp,vy:Math.sin(rot)*sp,life:.4,max:.4,color:"#ffb35c",size:3})}
+function explode(x,y,n){for(let i=0;i<n;i++){const a=Math.random()*6.28,s=40+Math.random()*260;
+  particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.8,max:.8,color:["#ff6b35","#ffd75e","#ff9a3c"][i%3],size:4})}}
+function updateParticles(dt){for(const p of particles){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=.98;p.vy*=.98}
+  particles=particles.filter(p=>p.life>0)}
+/* ================= 轨道根数 ================= */
+function orbitParams(){const b=findSOI(vessel.x,vessel.y);if(!b)return[0,0,0];
   const rx=vessel.x-b.x,ry=vessel.y-b.y,vx=vessel.vx,vy=vessel.vy;
-  const r=Math.hypot(rx,ry),v2=vx*vx+vy*vy;
-  const mu=G*b.mass;
-  const h=rx*vy-ry*vx;
-  const energy=v2/2-mu/r;
-  const a=-mu/(2*energy);if(a<=0)return[0,0];
+  const r=Math.hypot(rx,ry), v2=vx*vx+vy*vy;
+  const mu=G*b.mass, h=rx*vy-ry*vx, energy=v2/2-mu/r;
+  const a=-mu/(2*energy);
+  if(!(a>0))return[0,0,0];
   const ecc=Math.sqrt(Math.max(0,1+(2*energy*h*h)/(mu*mu)));
   const apo=a*(1+ecc)-b.radius, peri=a*(1-ecc)-b.radius;
-  return[Math.max(0,apo),Math.max(0,peri)]}
+  const period=2*Math.PI*Math.sqrt(Math.pow(a,3)/mu);
+  return[Math.max(0,apo),Math.max(0,peri),period]};
+function vesselDV(){const m0=mode==="flight"?vesselMass():rocketMass();
+  const mf=Math.max(1e-9,m0-(mode==="flight"?vesselFuel():rocketFuel()));
+  return ISP*g0*Math.log(m0/mf)}
+/* ================= 输入 ================= */
 let dragMode=null,dragStart=null,startCam=null,lastPinch=0;
-cv.addEventListener("mousedown",e=>{dragStart=[e.clientX,e.clientY];startCam={...cam};if(mode==="editor")dragMode="place";else dragMode="pan"});
+cv.addEventListener("mousedown",e=>{dragStart=[e.clientX,e.clientY];startCam={...cam};dragMode=mode==="editor"?"place":"pan"});
 cv.addEventListener("mousemove",e=>{if(!dragStart)return;if(dragMode==="pan"){
-    cam.x=startCam.x-(e.clientX-dragStart[0])/cam.scale;cam.y=startCam.y-(e.clientY-dragStart[1])/cam.scale}});
+  cam.x=startCam.x-(e.clientX-dragStart[0])/cam.scale;cam.y=startCam.y-(e.clientY-dragStart[1])/cam.scale}});
 window.addEventListener("mouseup",e=>{if(dragMode==="place"){const w=s2w(e.clientX,e.clientY);placePart(w[0],w[1])}dragMode=null;dragStart=null});
-cv.addEventListener("wheel",e=>{e.preventDefault();const k=e.deltaY>0?.8:1.25;cam.scale=clamp(cam.scale*k,1e-5,1e6)});
+cv.addEventListener("wheel",e=>{e.preventDefault();const k=e.deltaY>0?.8:1.25;cam.scale=clamp(cam.scale*k,1e-5,1e7)});
 let touch={};
 cv.addEventListener("touchstart",e=>{e.preventDefault();for(const t of e.changedTouches)touch[t.identifier]=[t.clientX,t.clientY];
   if(Object.keys(touch).length===1){dragStart=touch[Object.keys(touch)[0]];startCam={...cam};dragMode=mode==="editor"?"place":"pan"}});
 cv.addEventListener("touchmove",e=>{e.preventDefault();for(const t of e.changedTouches)touch[t.identifier]=[t.clientX,t.clientY];
   const ts=Object.values(touch);if(ts.length===2){const d=dist(ts[0][0],ts[0][1],ts[1][0],ts[1][1]);
-    if(lastPinch){cam.scale=clamp(cam.scale*d/lastPinch,1e-5,1e6)}lastPinch=d}
+    if(lastPinch){cam.scale=clamp(cam.scale*d/lastPinch,1e-5,1e7)}lastPinch=d}
   else if(dragMode==="pan"){const c=ts[0];cam.x=startCam.x-(c[0]-dragStart[0])/cam.scale;cam.y=startCam.y-(c[1]-dragStart[1])/cam.scale}});
 cv.addEventListener("touchend",e=>{for(const t of e.changedTouches)delete touch[t.identifier];lastPinch=0;
-  if(dragMode==="place"){const ts=Object.values(touch);if(ts.length){const w=s2w(ts[0][0],ts[0][1]);placePart(w[0],w[1])}else{
-    const w=s2w(dragStart[0],dragStart[1]);placePart(w[0],w[1])}}dragMode=null;dragStart=null});
+  if(dragMode==="place"){const ts=Object.values(touch);const w=s2w((ts[0]||dragStart)[0],(ts[0]||dragStart)[1]);placePart(w[0],w[1])}dragMode=null;dragStart=null});
 function s2w(sx,sy){return[(sx-W/2)/cam.scale+cam.x,(sy-H/2)/cam.scale+cam.y]}
 function w2s(wx,wy){return[(wx-cam.x)*cam.scale+W/2,(wy-cam.y)*cam.scale+H/2]}
-function focusVessel(){const b=findSOI(vessel.x,vessel.y);if(mode==="flight"&&!vessel.destroyed){
-    cam.x=vessel.x;cam.y=vessel.y;
-    const base=200/Math.max(b.radius*3,1);
-    cam.scale=clamp(base,0.25,2000)}}
+/* ================= 渲染 ================= */
+function focusVessel(){if(mode==="flight"&&!vessel.destroyed){
+  cam.x=vessel.x;cam.y=vessel.y;
+  const b=findSOI(vessel.x,vessel.y)||findBody("Earth");
+  cam.scale=clamp(120/Math.max(b.radius*3,1),0.08,2000)}}
 function render(){
-  ctx.fillStyle="#05070f";ctx.fillRect(0,0,W,H);
-  ctx.save();
+  ctx.fillStyle="#05070f";ctx.fillRect(0,0,W,H);ctx.save();
   for(const b of bodies){if(b.name==="Sun")continue;
     const[bx,by]=w2s(b.x,b.y);const rr=b.radius*cam.scale;
     if(bx<-2*rr||bx>W+2*rr||by<-2*rr||by>H+2*rr)continue;
     ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(bx,by,Math.max(1,rr),0,6.28);ctx.fill();
     ctx.strokeStyle="rgba(255,255,255,.15)";ctx.stroke();
-    if(cam.scale*100>b.radius){ctx.fillStyle="#fff";ctx.font="11px sans-serif";ctx.fillText(b.name,bx+rr+4,by)}
-  }
-  const sun=findBody("Sun");if(sun){const[bx,by]=w2s(sun.x,sun.y);const rr=sun.radius*cam.scale*Math.max(1,cam.scale/100);
+    if(cam.scale*100>b.radius){ctx.fillStyle="#fff";ctx.font="11px sans-serif";ctx.fillText(b.name,bx+rr+4,by)}}
+  const sun=findBody("Sun");
+  if(sun){const[bx,by]=w2s(sun.x,sun.y);const rr=sun.radius*cam.scale*Math.max(1,cam.scale/100);
     const grd=ctx.createRadialGradient(bx,by,0,bx,by,rr);grd.addColorStop(0,"#fff7cf");grd.addColorStop(1,"#ffd75e");
     ctx.fillStyle=grd;ctx.beginPath();ctx.arc(bx,by,Math.max(2,rr),0,6.28);ctx.fill()}
-  if(mode==="flight"){ctx.strokeStyle="rgba(255,255,255,.25)";ctx.lineWidth=1;ctx.beginPath();
+  /* 历史轨迹 */
+  if(mode==="flight"){ctx.strokeStyle="rgba(255,255,255,.22)";ctx.lineWidth=1;ctx.beginPath();
     for(let i=0;i<path.length;i++){const[sx,sy]=w2s(path[i].x,path[i].y);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy)}
     ctx.stroke()}
-  if(mode==="editor"){for(const p of rocket){drawPart(p.px,p.py,p.rot,PARTDEF[p.type],1)}}
-  if(mode==="flight"&&!vessel.destroyed){ctx.save();ctx.translate(W/2,H/2);
-    const k=cam.scale;
+  /* 预测轨道(绿虚线) */
+  if(mode==="flight"&&predict.length>2){ctx.strokeStyle="rgba(80,220,120,.6)";ctx.lineWidth=1.5;ctx.setLineDash([5,5]);ctx.beginPath();
+    for(let i=0;i<predict.length;i++){const[sx,sy]=w2s(predict[i].x,predict[i].y);i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy)}
+    ctx.stroke();ctx.setLineDash([])}
+  /* 编辑器火箭 */
+  if(mode==="editor"){for(const p of rocket){const[sx,sy]=w2s(p.px,p.py);drawPart(sx,sy,p.rot,PARTDEF[p.type],1)}}
+  /* 飞行火箭 */
+  if(mode==="flight"&&!vessel.destroyed){
     for(const p of vessel.parts){const wx=p.px-vessel.x,wy=p.py-vessel.y;
-      const rx=wx*Math.cos(-vessel.rot)-wy*Math.sin(-vessel.rot),ry=wx*Math.sin(-vessel.rot)+wy*Math.cos(-vessel.rot);
-      drawPart(rx*k,ry*k,-vessel.rot,p,k)}
-    ctx.restore()}
+      const rx=wx*Math.cos(-vessel.rot)-wy*Math.sin(-vessel.rot);
+      const ry=wx*Math.sin(-vessel.rot)+wy*Math.cos(-vessel.rot);
+      const[sx,sy]=w2s(vessel.x+rx,vessel.y+ry);drawPart(sx,sy,-vessel.rot,p,cam.scale)}}
+  /* 粒子 */
   for(const p of particles){const[sx,sy]=w2s(p.x,p.y);const a=p.life/p.max;ctx.globalAlpha=a;
     ctx.fillStyle=p.color;ctx.fillRect(sx-p.size/2,sy-p.size/2,p.size,p.size)}ctx.globalAlpha=1;
-  ctx.restore();
-}
+  ctx.restore()}
 function drawPart(x,y,rot,def,k){ctx.save();ctx.translate(x,y);ctx.rotate(-rot);
   ctx.fillStyle=def.color;ctx.fillRect(-def.w/2*k,-def.h/2*k,def.w*k,def.h*k);
-  ctx.strokeStyle="rgba(0,0,0,.5)";ctx.strokeRect(-def.w/2*k,-def.h/2*k,def.w*k,def.h*k);
+  ctx.strokeStyle="rgba(0,0,0,.5)";ctx.lineWidth=1;ctx.strokeRect(-def.w/2*k,-def.h/2*k,def.w*k,def.h*k);
   ctx.restore()}
+/* ================= HUD ================= */
 function updateHUD(){const b=findSOI(vessel.x,vessel.y);
-  document.getElementById("time").textContent=fmt(simTime/60);
-  const spd=Math.hypot(vessel.vx,vessel.vy);
-  document.getElementById("speed").textContent=fmt(spd);
+  document.getElementById("time").textContent=fmtTime(simTime);
+  document.getElementById("speed").textContent=fmt(Math.hypot(vessel.vx,vessel.vy));
   const r=dist(vessel.x,vessel.y,b.x,b.y);
   document.getElementById("vert").textContent=fmt(-(vessel.vx*(b.x-vessel.x)+vessel.vy*(b.y-vessel.y))/r);
   document.getElementById("soi").textContent=b.name;
   document.getElementById("alt").textContent=fmt(r-b.radius);
   document.getElementById("fuel").textContent=fmt(mode==="flight"?vesselFuel():rocketFuel());
   document.getElementById("mass").textContent=fmt(mode==="flight"?vesselMass():rocketMass());
-  const[apo,peri]=mode==="flight"?orbitParams():[0,0];
-  document.getElementById("apo").textContent=fmt(apo);document.getElementById("peri").textContent=fmt(peri)}
-function rocketFuel(){let f=0;for(const p of rocket)f+=PARTDEF[p.type].fuel||0;return f}
+  const[apo,peri,period]=mode==="flight"?orbitParams():[0,0,0];
+  document.getElementById("apo").textContent=fmt(apo);
+  document.getElementById("peri").textContent=fmt(peri);
+  document.getElementById("period").textContent=period>0?fmtTime(period):"--";
+  document.getElementById("dv").textContent=fmt(vesselDV())}
+/* ================= 控制 ================= */
 document.querySelectorAll(".partItem").forEach(el=>{el.addEventListener("click",()=>{
   document.querySelectorAll(".partItem").forEach(e=>e.classList.remove("selected"));
   el.classList.add("selected");selected=el.dataset.type})});
-document.getElementById("launchBtn").onclick=()=>{if(mode==="editor"){buildVessel();path=[];mode="flight"}};
-document.getElementById("resetBtn").onclick=()=>{mode="editor";vessel.destroyed=true;path=[];particles=[]};
-document.getElementById("clearBtn").onclick=()=>{if(mode==="editor"){rocket=[]}};
-document.getElementById("timeInc").onclick=()=>{timeScale=Math.min(timeScale*4,1000)};
-document.getElementById("timeDec").onclick=()=>{timeScale=Math.max(timeScale/4,1)};
-document.getElementById("stageBtn").onclick=()=>{
-  const idx=vessel.parts.findIndex(p=>p.dec);if(idx<0)return;
+const $=id=>document.getElementById(id);
+$.launchBtn.onclick=()=>{if(mode==="editor"&&rocket.length){buildVessel();mode="flight";updatePredict()}};
+$.resetBtn.onclick=()=>{mode="editor";vessel.destroyed=true;path=[];predict=[];particles=[]};
+$.clearBtn.onclick=()=>{if(mode==="editor"){rocket=[]}};
+$.timeInc.onclick=()=>{timeScale=Math.min(timeScale*4,1000)};
+$.timeDec.onclick=()=>{timeScale=Math.max(timeScale/4,1)};
+$.autoBtn.onclick=()=>{autoSteer=!autoSteer;$.autoBtn.textContent="Auto: "+(autoSteer?"ON":"OFF")};
+$.stageBtn.onclick=()=>{const idx=vessel.parts.findIndex(p=>p.dec);if(idx<0)return;
   vessel.parts.splice(idx+1);vessel.destroyed=false};
-window.addEventListener("keydown",e=>{if(e.code==="Space"){e.preventDefault();if(mode==="flight")vessel.engineOn=!vessel.engineOn}});
+window.addEventListener("keydown",e=>{
+  if(e.code==="Space"||e.code==="KeyW"){e.preventDefault();if(mode==="flight")vessel.engineOn=!vessel.engineOn}
+  else if(e.code==="KeyA"&&mode==="flight")vessel.rot-=0.5;
+  else if(e.code==="KeyD"&&mode==="flight")vessel.rot+=0.5;
+  else if(e.code==="KeyP")paused=!paused;
+  else if(e.code==="KeyR"&&mode==="editor")rotateRocket()});
+/* ================= 主循环 ================= */
 let last=performance.now();
 function loop(now){const frame=Math.min((now-last)/1000,.1);last=now;
-  updateBodies(frame*timeScale);
-  if(mode==="flight"){const dt=frame*timeScale;const sub=Math.max(1,Math.ceil(dt/0.02));
-    for(let i=0;i<sub;i++){stepVessel(dt/sub);if(vessel.destroyed)break}
-    recordPath(dt)}
-  focusVessel();
-  render();updateHUD();
+  if(!paused){
+    updateBodies(frame*timeScale);
+    if(mode==="flight"){const dt=frame*timeScale;const sub=Math.max(1,Math.ceil(dt/0.02));
+      for(let i=0;i<sub;i++){stepVessel(dt/sub);if(vessel.destroyed)break}
+      recordPath(dt);updatePredict()}
+    updateParticles(frame);}
+  focusVessel();render();updateHUD();
   requestAnimationFrame(loop)}
 window.addEventListener("resize",()=>{W=innerWidth;H=innerHeight;cv.width=W;cv.height=H});
 requestAnimationFrame(loop);
